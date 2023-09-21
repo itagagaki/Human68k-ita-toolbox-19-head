@@ -2,8 +2,11 @@
 *
 * Itagaki Fumihiko 28-Jan-93  Create.
 * 1.0
+* Itagaki Fumihiko 02-Feb-93  count がバイト単位で出力がブロック・デバイスのときに
+*                             ヘッダが出力されないバグを修正．
+* 1.1
 *
-* Usage: head [ -qvBCZ ] { [ -<行数> ] [ -- ] [ <ファイル> ] } ...
+* Usage: head [ -qvBCZ ] { [ -<N>[ckl] ] [ -- ] [ <ファイル> ] } ...
 
 .include doscall.h
 .include chrcode.h
@@ -433,6 +436,7 @@ flush_done:
 		rts
 
 head_byte:
+		bsr	flush_outbuf
 		cmp.l	d2,d4
 		bls	head_byte_1
 
@@ -600,7 +604,7 @@ malloc:
 .data
 
 	dc.b	0
-	dc.b	'## head 1.0 ##  Copyright(C)1993 by Itagaki Fumihiko',0
+	dc.b	'## head 1.1 ##  Copyright(C)1993 by Itagaki Fumihiko',0
 
 msg_myname:		dc.b	'head: ',0
 msg_no_memory:		dc.b	'メモリが足りません',CR,LF,0
