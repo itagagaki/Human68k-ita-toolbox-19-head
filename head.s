@@ -15,6 +15,9 @@
 * Itagaki Fumihiko 19-Feb-93  標準入力が切り替えられていても端末から^Cや^Sなどが効くようにした
 * Itagaki Fumihiko 19-Feb-93  標準入力は先頭にシークしてから処理する
 * 1.4
+* Itagaki Fumihiko 18-Sep-94  たとえば -5c で端末から ab^Z を入力したとき ^Z が EOF として認識
+*                             されないバグを修正.
+* 1.5
 *
 * Usage: head [ -qvBCZ ] { [ -<N>[ckl] ] [ -- ] [ <ファイル> ] } ...
 
@@ -392,6 +395,9 @@ head_one_1:
 		st	ignore_from_ctrld
 head_one_2:
 head_loop:
+		btst	#STAT_EOF,d3
+		bne	head_one_done
+
 		move.l	#INPBUF_SIZE,-(a7)
 		pea	inpbuf(pc)
 		move.w	d1,-(a7)
@@ -418,34 +424,33 @@ trunc_ctrld_done:
 		lea	inpbuf(pc),a2
 		btst	#FLAG_byte_unit,d5
 		bne	head_byte
-write_loop:
+output_lines:
 		move.b	(a2)+,d0
 		cmp.b	#LF,d0
-		bne	head_one_putc
+		bne	output_lines_putc
 
 		btst	#FLAG_C,d5
-		beq	head_one_putc
+		beq	output_lines_putc
 
-		bset	#1,d3				*  LFの前にCRを吐かせるため
-head_one_putc:
+		bset	#STAT_CR,d3			*  LFの前にCRを吐かせるため
+output_lines_putc:
 		bsr	flush_cr
-		bset	#1,d3
+		bset	#STAT_CR,d3
 		cmp.b	#CR,d0
-		beq	head_one_write_continue
+		beq	output_lines_continue
 
-		bclr	#1,d3
+		bclr	#STAT_CR,d3
 		bsr	putc
 		cmp.b	#LF,d0
-		bne	head_one_write_continue
+		bne	output_lines_continue
 
 		subq.l	#1,d2
 		beq	head_one_done
-head_one_write_continue:
+output_lines_continue:
 		subq.l	#1,d4
-		bne	write_loop
-head_one_continue:
-		btst	#0,d3
-		beq	head_loop
+		bne	output_lines
+		bra	head_loop
+
 head_one_done:
 		bsr	flush_cr
 head_one_return:
@@ -510,7 +515,7 @@ werror_exit_2:
 		bra	exit_program
 *****************************************************************
 flush_cr:
-		btst	#1,d3
+		btst	#STAT_CR,d3
 		beq	flush_cr_return
 
 		move.l	d0,-(a7)
@@ -540,7 +545,7 @@ trunc_found:
 		subq.l	#1,a0
 		move.l	a0,d4
 		sub.l	a1,d4
-		bset	#0,d3				*  set EOF
+		bset	#STAT_EOF,d3
 trunc_done:
 		movem.l	(a7)+,d1/a0-a1
 trunc_return:
@@ -648,7 +653,7 @@ malloc:
 .data
 
 	dc.b	0
-	dc.b	'## head 1.4 ##  Copyright(C)1993 by Itagaki Fumihiko',0
+	dc.b	'## head 1.5 ##  Copyright(C)1993-94 by Itagaki Fumihiko',0
 
 msg_myname:		dc.b	'head: ',0
 msg_no_memory:		dc.b	'メモリが足りません',CR,LF,0

@@ -1,8 +1,6 @@
 MANIFEST       このファイル
 README         まず最初にお読み下さい
 NOTICE         版権と許諾についての告示書
-DIRECTORY      ITA製品リスト
-HUPAIR         HUPAIRについてのインフォメーション
 CHANGES        headのモデルチェンジの履歴
 head.1         headのマニュアル
 head.x         head実行ファイル
