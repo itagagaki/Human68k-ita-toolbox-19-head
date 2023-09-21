@@ -5,6 +5,11 @@
 * Itagaki Fumihiko 02-Feb-93  count がバイト単位で出力がブロック・デバイスのときに
 *                             ヘッダが出力されないバグを修正．
 * 1.1
+* Itagaki Fumihiko 06-Feb-93  ファイル引数に過剰な / があれば除去する
+* Itagaki Fumihiko 06-Feb-93  bsr tfopen -> DOS _OPEN
+* Itagaki Fumihiko 06-Feb-93  bsr fclose -> DOS _CLOSE
+* Itagaki Fumihiko 06-Feb-93  bsr mulul -> lsl.l
+* 1.2
 *
 * Usage: head [ -qvBCZ ] { [ -<N>[ckl] ] [ -- ] [ <ファイル> ] } ...
 
@@ -17,9 +22,7 @@
 .xref atou
 .xref strlen
 .xref strfor1
-.xref tfopen
-.xref fclose
-.xref mulul
+.xref strip_excessive_slashes
 
 STACKSIZE	equ	2048
 
@@ -36,6 +39,7 @@ FLAG_v		equ	1	*  -v
 FLAG_B		equ	2	*  -B
 FLAG_C		equ	3	*  -C
 FLAG_Z		equ	4	*  -Z
+FLAG_byte_unit	equ	5
 
 .text
 
@@ -51,9 +55,6 @@ start1:
 		move.l	a0,-(a7)
 		DOS	_SETBLOCK
 		addq.l	#8,a7
-	*
-		move.l	#DEFAULT_COUNT,count
-		sf	byte_unit
 	*
 	*  引数並び格納エリアを確保する
 	*
@@ -72,6 +73,7 @@ start1:
 		movea.l	a1,a0				*  A0 : 引数ポインタ
 		move.l	d0,d7				*  D7.L : 引数カウンタ
 		moveq	#0,d5				*  D5.B : フラグ
+		move.l	#DEFAULT_COUNT,count
 decode_opt_loop1:
 		tst.l	d7
 		beq	decode_opt_done
@@ -201,10 +203,15 @@ outbuf_ok:
 		cmp.l	#1,d7
 		shi	show_header
 do_files:
-		*  開始
+	*
+	*  開始
+	*
 		tst.l	d7
 		beq	no_file_arg
 for_file_loop:
+		movea.l	a0,a3
+		bsr	strfor1
+		exg	a0,a3
 		cmpi.b	#'-',(a0)
 		bne	for_file_1
 
@@ -215,17 +222,22 @@ for_file_loop:
 		bra	for_file_continue
 
 for_file_1:
+		bsr	strip_excessive_slashes
 		lea	msg_open_fail(pc),a2
-		moveq	#0,d0
-		bsr	tfopen
+		clr.w	-(a7)
+		move.l	a0,-(a7)
+		DOS	_OPEN
+		addq.l	#6,a7
+		tst.l	d0
 		bmi	werror_exit_2
 
 		move.w	d0,d1
 		bsr	dofile
-		move.w	d1,d0
-		bsr	fclose
+		move.w	d1,-(a7)
+		DOS	_CLOSE
+		addq.l	#2,a7
 for_file_continue:
-		bsr	strfor1
+		movea.l	a3,a0
 		subq.l	#1,d7
 		bsr	parse_count
 		tst.l	d7
@@ -266,26 +278,26 @@ parse_count_1:
 		bne	bad_count
 
 		move.l	d1,count
-		sf	byte_unit
+		bclr	#FLAG_byte_unit,d5
 		move.b	(a0),d0
 		beq	parse_count_continue
 
 		cmp.b	#'l',d0
 		beq	parse_count_unit_ok
 
-		st	byte_unit
+		bset	#FLAG_byte_unit,d5
 		cmp.b	#'c',d0
 		beq	parse_count_unit_ok
 
 		cmp.b	#'k',d0
 		bne	bad_count
 
-		move.l	#1024,d0
-		bsr	mulul
-		tst.l	d1
-		bne	bad_count
+		cmp.l	#$400000,d1
+		bhs	bad_count
 
-		move.l	d0,count
+		lsl.l	#8,d1
+		lsl.l	#2,d1
+		move.l	d1,count
 parse_count_unit_ok:
 		addq.l	#1,a0
 parse_count_continue:
@@ -375,7 +387,7 @@ trunc_ctrld_done:
 		beq	dofile_done
 
 		lea	inpbuf(pc),a2
-		tst.b	byte_unit
+		btst	#FLAG_byte_unit,d5
 		bne	head_byte
 write_loop:
 		move.b	(a2)+,d0
@@ -426,7 +438,7 @@ flush_outbuf:
 		bmi	write_fail
 
 		cmp.l	-4(a7),d0
-		blt	write_fail
+		blo	write_fail
 
 		movea.l	a4,a5
 		move.l	#OUTBUF_SIZE,d0
@@ -604,7 +616,7 @@ malloc:
 .data
 
 	dc.b	0
-	dc.b	'## head 1.1 ##  Copyright(C)1993 by Itagaki Fumihiko',0
+	dc.b	'## head 1.2 ##  Copyright(C)1993 by Itagaki Fumihiko',0
 
 msg_myname:		dc.b	'head: ',0
 msg_no_memory:		dc.b	'メモリが足りません',CR,LF,0
@@ -613,7 +625,7 @@ msg_read_fail:		dc.b	': 入力エラー',CR,LF,0
 msg_write_fail:		dc.b	'head: 出力エラー',CR,LF,0
 msg_stdin:		dc.b	'- 標準入力 -',0
 msg_illegal_option:	dc.b	'不正なオプション -- ',0
-msg_illegal_count:	dc.b	'行数が不正です',0
+msg_illegal_count:	dc.b	'カウントの指定が不正です',0
 msg_header1:		dc.b	CR,LF
 msg_header2:		dc.b	'==> ',0
 msg_header3:		dc.b	' <=='
@@ -626,7 +638,6 @@ msg_usage:		dc.b	CR,LF,'使用法:  head [-qvBCZ] { [-<N>[ckl]] [--] [<ファイル>] }
 outbuf_free:		ds.l	1
 count:			ds.l	1
 show_header:		ds.b	1
-byte_unit:		ds.b	1
 ignore_from_ctrlz:	ds.b	1
 ignore_from_ctrld:	ds.b	1
 do_buffering:		ds.b	1
