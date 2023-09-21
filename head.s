@@ -10,6 +10,8 @@
 * Itagaki Fumihiko 06-Feb-93  bsr fclose -> DOS _CLOSE
 * Itagaki Fumihiko 06-Feb-93  bsr mulul -> lsl.l
 * 1.2
+* Itagaki Fumihiko 09-Feb-93  head_byte ‚Å _WRITE ‚Ìf’f‚ğ–Y‚ê‚Ä‚¢‚½
+* 1.3
 *
 * Usage: head [ -qvBCZ ] { [ -<N>[ckl] ] [ -- ] [ <ƒtƒ@ƒCƒ‹> ] } ...
 
@@ -462,6 +464,9 @@ head_byte_1:
 		tst.l	d0
 		bmi	write_fail
 
+		cmp.l	d4,d0
+		blo	write_fail
+
 		sub.l	d4,d2
 		bne	head_loop
 
@@ -616,7 +621,7 @@ malloc:
 .data
 
 	dc.b	0
-	dc.b	'## head 1.2 ##  Copyright(C)1993 by Itagaki Fumihiko',0
+	dc.b	'## head 1.3 ##  Copyright(C)1993 by Itagaki Fumihiko',0
 
 msg_myname:		dc.b	'head: ',0
 msg_no_memory:		dc.b	'ƒƒ‚ƒŠ‚ª‘«‚è‚Ü‚¹‚ñ',CR,LF,0
