@@ -12,6 +12,9 @@
 * 1.2
 * Itagaki Fumihiko 09-Feb-93  head_byte で _WRITE の診断を忘れていた
 * 1.3
+* Itagaki Fumihiko 19-Feb-93  標準入力が切り替えられていても端末から^Cや^Sなどが効くようにした
+* Itagaki Fumihiko 19-Feb-93  標準入力は先頭にシークしてから処理する
+* 1.4
 *
 * Usage: head [ -qvBCZ ] { [ -<N>[ckl] ] [ -- ] [ <ファイル> ] } ...
 
@@ -57,6 +60,8 @@ start1:
 		move.l	a0,-(a7)
 		DOS	_SETBLOCK
 		addq.l	#8,a7
+	*
+		move.l	#-1,stdin
 	*
 	*  引数並び格納エリアを確保する
 	*
@@ -206,41 +211,61 @@ outbuf_ok:
 		shi	show_header
 do_files:
 	*
+	*  標準入力を切り替える
+	*
+		clr.w	-(a7)				*  標準入力を
+		DOS	_DUP				*  複製したハンドルから入力し，
+		addq.l	#2,a7
+		move.l	d0,stdin
+		bmi	start_do_files
+
+		clr.w	-(a7)
+		DOS	_CLOSE				*  標準入力はクローズする．
+		addq.l	#2,a7				*  こうしないと ^C や ^S が効かない
+start_do_files:
+	*
 	*  開始
 	*
 		tst.l	d7
-		beq	no_file_arg
+		beq	do_stdin
 for_file_loop:
+		subq.l	#1,d7
 		movea.l	a0,a3
 		bsr	strfor1
 		exg	a0,a3
 		cmpi.b	#'-',(a0)
-		bne	for_file_1
+		bne	do_file
 
 		tst.b	1(a0)
-		bne	for_file_1
+		bne	do_file
+do_stdin:
+		lea	msg_stdin(pc),a0
+		move.l	stdin,d1
+		bmi	open_fail
 
-		bsr	do_stdin
+		clr.w	-(a7)				*  先頭
+		clr.l	-(a7)				*  +0に
+		move.w	d1,-(a7)			*  標準入力を
+		DOS	_SEEK				*  シーク
+		addq.l	#8,a7
+		bsr	head_one
 		bra	for_file_continue
 
-for_file_1:
+do_file:
 		bsr	strip_excessive_slashes
-		lea	msg_open_fail(pc),a2
 		clr.w	-(a7)
 		move.l	a0,-(a7)
 		DOS	_OPEN
 		addq.l	#6,a7
-		tst.l	d0
-		bmi	werror_exit_2
+		move.l	d0,d1
+		bmi	open_fail
 
-		move.w	d0,d1
-		bsr	dofile
+		bsr	head_one
 		move.w	d1,-(a7)
 		DOS	_CLOSE
 		addq.l	#2,a7
 for_file_continue:
 		movea.l	a3,a0
-		subq.l	#1,d7
 		bsr	parse_count
 		tst.l	d7
 		beq	all_done
@@ -248,12 +273,22 @@ for_file_continue:
 		lea	msg_header1(pc),a1
 		bra	for_file_loop
 
-no_file_arg:
-		bsr	do_stdin
 all_done:
 exit_program:
+		move.l	stdin,d0
+		bmi	exit_program_1
+
+		clr.w	-(a7)				*  標準入力を
+		move.w	d0,-(a7)			*  元に
+		DOS	_DUP2				*  戻す．
+		DOS	_CLOSE				*  複製はクローズする．
+exit_program_1:
 		move.w	d6,-(a7)
 		DOS	_EXIT2
+
+open_fail:
+		lea	msg_open_fail(pc),a2
+		bra	werror_exit_2
 ****************************************************************
 parse_count:
 parse_count_loop:
@@ -320,22 +355,14 @@ parse_count_break:
 parse_count_done:
 		rts
 ****************************************************************
-* dofile
+* head_one
 ****************************************************************
 STAT_EOF		equ	0
 STAT_CR			equ	1
 
-do_stdin:
-		move.l	a0,-(a7)
-		lea	msg_stdin(pc),a0
-		moveq	#0,d1
-		bsr	dofile
-		movea.l	(a7)+,a0
-		rts
-
-dofile:
+head_one:
 		tst.b	show_header
-		beq	dofile1
+		beq	head_one_1
 
 		move.l	a0,-(a7)
 		movea.l	a1,a0
@@ -345,9 +372,9 @@ dofile:
 		lea	msg_header3(pc),a0
 		bsr	puts
 		movea.l	(a7)+,a0
-dofile1:
+head_one_1:
 		move.l	count,d2			*  D2.L : 書き出しカウント
-		beq	dofile_return
+		beq	head_one_return
 
 		moveq	#0,d3				*  D3.L : bit0 - EOF
 							*         bit1 - pending CR
@@ -356,14 +383,14 @@ dofile1:
 		sf	ignore_from_ctrld
 		move.w	d1,d0
 		bsr	is_chrdev
-		beq	dofile_2			*  -- ブロック・デバイス
+		beq	head_one_2			*  -- ブロック・デバイス
 
 		btst	#5,d0				*  '0':cooked  '1':raw
-		bne	dofile_2
+		bne	head_one_2
 
 		st	ignore_from_ctrlz
 		st	ignore_from_ctrld
-dofile_2:
+head_one_2:
 head_loop:
 		move.l	#INPBUF_SIZE,-(a7)
 		pea	inpbuf(pc)
@@ -386,7 +413,7 @@ trunc_ctrlz_done:
 		bsr	trunc
 trunc_ctrld_done:
 		tst.l	d4
-		beq	dofile_done
+		beq	head_one_done
 
 		lea	inpbuf(pc),a2
 		btst	#FLAG_byte_unit,d5
@@ -394,34 +421,34 @@ trunc_ctrld_done:
 write_loop:
 		move.b	(a2)+,d0
 		cmp.b	#LF,d0
-		bne	dofile_putc
+		bne	head_one_putc
 
 		btst	#FLAG_C,d5
-		beq	dofile_putc
+		beq	head_one_putc
 
 		bset	#1,d3				*  LFの前にCRを吐かせるため
-dofile_putc:
+head_one_putc:
 		bsr	flush_cr
 		bset	#1,d3
 		cmp.b	#CR,d0
-		beq	dofile_write_continue
+		beq	head_one_write_continue
 
 		bclr	#1,d3
 		bsr	putc
 		cmp.b	#LF,d0
-		bne	dofile_write_continue
+		bne	head_one_write_continue
 
 		subq.l	#1,d2
-		beq	dofile_done
-dofile_write_continue:
+		beq	head_one_done
+head_one_write_continue:
 		subq.l	#1,d4
 		bne	write_loop
-dofile_continue:
+head_one_continue:
 		btst	#0,d3
 		beq	head_loop
-dofile_done:
+head_one_done:
 		bsr	flush_cr
-dofile_return:
+head_one_return:
 flush_outbuf:
 		move.l	d0,-(a7)
 		tst.b	do_buffering
@@ -621,7 +648,7 @@ malloc:
 .data
 
 	dc.b	0
-	dc.b	'## head 1.3 ##  Copyright(C)1993 by Itagaki Fumihiko',0
+	dc.b	'## head 1.4 ##  Copyright(C)1993 by Itagaki Fumihiko',0
 
 msg_myname:		dc.b	'head: ',0
 msg_no_memory:		dc.b	'メモリが足りません',CR,LF,0
@@ -640,6 +667,7 @@ msg_usage:		dc.b	CR,LF,'使用法:  head [-qvBCZ] { [-<N>[ckl]] [--] [<ファイル>] }
 .bss
 
 .even
+stdin:			ds.l	1
 outbuf_free:		ds.l	1
 count:			ds.l	1
 show_header:		ds.b	1
